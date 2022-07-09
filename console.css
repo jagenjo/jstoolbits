@@ -1,0 +1,93 @@
+.uconsole {
+	font: 14px Tahoma;
+	position: fixed:
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 80%;
+	margin: 0;
+	padding: 0;
+	opacity: 0.9;
+	background-color: black;
+	border-bottom: 1px solid white;
+}
+
+.uconsole .content {
+	width: 100%;
+	height: calc( 100% - 21px );
+	margin: 0;
+	padding: 0;
+	overflow: auto;
+	overflow-y: scroll; 
+	position: relative;
+}
+
+.uconsole .messages {
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	position: absolute;
+	bottom: 0;
+	left: 0;
+}
+
+.uconsole .content .msg {
+	padding-left: 8px;
+	margin-top: 2px;
+	color: #AAA;
+}
+
+.uconsole .content .msg.me {
+	color: white;
+}
+
+.uconsole .content .msg.error {
+	color: #F44;
+}
+
+.uconsole .content .msg.warn {
+	color: #FF0;
+}
+
+.uconsole .content .msg.pre {
+	white-space: pre;
+ }
+
+.uconsole .typing {
+	width: 100%;
+	height: 20px;
+	margin: 0;
+	padding: 0;
+	border-top: 1px solid #333;
+}
+
+.uconsole .typing .hint {
+    position: relative;
+    top: 1px; 
+    margin-bottom: 1px;	
+	margin: 2px;
+	padding: 2px;
+	background-color: #333;
+	color: #AAA;
+	border-radius: 3px;
+	display: inline;
+}
+
+.uconsole .typing input {
+	width: 100%;
+	height: 20px;
+	margin: 0;
+	padding-left: 4px;
+	overflow: hidden;
+	color: white;
+	background-color: black;
+	border: 0;
+}
+
+.uconsole .typing input:focus{
+    outline: none;
+}
+
+.uconsole .cyan {
+	color: cyan !important;
+}
