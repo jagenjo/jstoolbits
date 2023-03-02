@@ -15,21 +15,25 @@ function inrange(v,maxv)
 	return v;
 }
 
+//0 is TOP, -90 is LEFT, 90 is RIGHT
 function vectorFromAngle( angle, r )
 {
 	r = r || 1;
-	return [Math.cos(angle)*r,Math.sin(angle)*r];
+	return [Math.sin(angle)*r,-Math.cos(angle)*r];
 }
 
 function Interface()
 {
 	this.root = new Widget();
+    this.root.ui = this;
 	//this.root.name = "root";
 	this.root.is_root = true;
 	this.hover_widget = null; //below the mouse
 	this.active_widget = null;//being clicked
 	this.selected_widget = null;//last widget clicked
 	this.background_color = null;
+
+	this.onWidgetChange = null; //called when a widget chagnes value (name,value,widget)
 }
 
 WIDGETS.Interface = Interface;
@@ -154,6 +158,8 @@ Widget.prototype.add = function(widget)
 	if(widget.parent)
 		throw("already has parent");
 	widget.parent = this;
+	if(this.ui)
+		widget.ui = this.ui;
 	this.children.push(widget);
 }
 
@@ -166,7 +172,7 @@ Widget.prototype.remove = function(widget)
 	widget.parent = null;
 }
 
-Widget.prototype.getHover = function(x,y)
+Widget.prototype.getHover = function(x,y, skip_disabled)
 {
 	if( x < 0 || x >= this.size[0] ||
 		y < 0 || y >= this.size[1] )
@@ -175,7 +181,7 @@ Widget.prototype.getHover = function(x,y)
 	for(var i = this.children.length - 1; i >= 0; --i)
 	{
 		var w = this.children[i];
-		if(!w.flags.visible || w.flags.disabled == true )
+		if(!w.flags.visible || (skip_disabled && w.flags.disabled == true) )
 			continue;
 		var r = w.getHover( x / this.scale - w.position[0], y / this.scale - w.position[1] );
 		if(r)
@@ -393,13 +399,13 @@ function TextField()
 	Widget.call(this);
 	this.caption = null;
 	this.callback = null;
-	this.value = false;
+	this.value = "";
 }
 
 TextField.prototype.__proto__ = Widget.prototype;
 WIDGETS.TextField = TextField;
 
-Button.prototype.onMouse = function( e )
+TextField.prototype.onMouse = function( e )
 {
 	if(e.type == "mousedown")
 	{
@@ -461,9 +467,11 @@ function Dial()
 	this.markers = 0;
 	this.continuous = false;
 	this.type = Dial.ARROW;
+	this.increment_dragging = false; //if true, when dragging will increment/decrement, not change to pos
 
-	this.start_angle = Math.PI * 0.75;
-	this.total_angle = Math.PI * 1.5;
+	//0 is UP, Math.PI/2 is RIGHT, -Math.PI/2 is LEFT
+	this.start_angle = -135;
+	this.total_angle = 270;
 }
 
 Dial.prototype.__proto__ = Widget.prototype;
@@ -497,7 +505,7 @@ Dial.prototype.drawWidget = function( ctx )
 		{
 			ctx.beginPath();
 			var angle = this.start_angle + delta * i;
-			var vector = vectorFromAngle(angle);
+			var vector = vectorFromAngle(angle * DEG2RAD);
 			var limit = Boolean(i == 0 || i == (this.markers-1));
 			if (this.type == Dial.KNOB)
 			{
@@ -530,7 +538,7 @@ Dial.prototype.drawWidget = function( ctx )
 	ctx.fillStyle = "white";
 	ctx.save();
 	ctx.translate(this.size[0]*0.5,this.size[1]*0.5);
-	ctx.rotate(angle);
+	ctx.rotate(angle * DEG2RAD);
 	if(this.onDrawArrow)
 		this.onDrawArrow(ctx);
 	else
@@ -538,34 +546,34 @@ Dial.prototype.drawWidget = function( ctx )
 		if(this.type == Dial.ARROW)
 		{
 			ctx.beginPath();
-			ctx.moveTo(-r*0.1,0);
-			ctx.lineTo(0,-5);
-			ctx.lineTo(r,0);
-			ctx.lineTo(0,5);
+			ctx.moveTo(0,r*0.1);
+			ctx.lineTo(-5,0);
+			ctx.lineTo(0,-r);
+			ctx.lineTo(5,0);
 			ctx.fill();
 		}
 		else if (this.type == Dial.BLOCK)
 		{
 			ctx.strokeStyle = "white";
 			ctx.beginPath();
-			ctx.moveTo(-r*0.1,-5);
-			ctx.lineTo(-r*0.1,5);
-			ctx.lineTo(r,5);
-			ctx.lineTo(r,-5);
+			ctx.moveTo(-5,r*0.1);
+			ctx.lineTo(5,r*0.1);
+			ctx.lineTo(5,-r);
+			ctx.lineTo(-5,-r);
 			ctx.fill();
 		}		
 		else if (this.type == Dial.LINE)
 		{
 			ctx.strokeStyle = "white";
 			ctx.beginPath();
-			ctx.moveTo(-r*0.1,0);
-			ctx.lineTo(r,0);
+			ctx.moveTo(0,r*0.1);
+			ctx.lineTo(0,-r);
 			ctx.stroke();
 		}
 		else if (this.type == Dial.KNOB)
 		{
 			ctx.beginPath();
-			ctx.arc(r*0.8,0,r*0.1,0,Math.PI*2);
+			ctx.arc(0,-r*0.8,r*0.1,0,Math.PI*2);
 			ctx.fill();
 		}		
 	}
@@ -589,16 +597,20 @@ Dial.prototype.getValue = function()
 	return Math.round(v / grid) * grid;
 }
 
+//in degrees
 Dial.prototype.getAngle = function( value )
 {
 	var start_angle = this.start_angle;
 	var total_angle = this.total_angle;
 	if( this.continuous )
-		total_angle = Math.PI * 2;
+		total_angle = 360;
 	if(value == null)
 		value = this.getValue();
 	var angle = remap( value, this.min_value, this.max_value, 0, total_angle );
 	angle += start_angle;
+	angle = angle % 360;
+	if(angle < 0)
+		angle += 360;
 	return angle;
 }
 
@@ -611,18 +623,59 @@ Dial.prototype.getHover = function(x,y)
 
 Dial.prototype.onMouse = function( e )
 {
+	var range = this.max_value - this.min_value;
+	var old = this.getValue();
+
 	if( e.type == "mousemove" )
 	{
-		var range = this.max_value - this.min_value;
-		var delta = range / 200;
-		var inc = e.deltay * delta;
-		var old = this.getValue();
-		this.value -= inc * this.speed;
+		if(!this.increment_dragging && !e.shiftKey )
+		{
+			this.setValueFromPosition([ e.mousex, e.mousey ])
+		}
+		else
+		{
+			var delta = range / 200;
+			var inc = e.deltay * delta;
+			this.value -= inc * this.speed;
+		}
 		var value = this.getValue(); //quantized value
 		if(old != value)
 			this.processValueChange( this, value, old );
 		return true;
 	}
+	else if(e.type == "mousedown")
+	{
+		if(!this.increment_dragging && !e.shiftKey )
+			this.setValueFromPosition([ e.mousex, e.mousey ])
+		var value = this.getValue(); //quantized value
+		if(old != value)
+			this.processValueChange( this, value, old );
+		return true;
+	}
+}
+
+Dial.prototype.setValueFromPosition = function( pos )
+{
+	var range = this.max_value - this.min_value;
+	var start_angle = this.start_angle;
+	var total_angle = this.total_angle;
+	if(this.continuous)
+		total_angle = 360;
+	var lpos = this.globalToLocal(pos);
+	lpos[0] -= this.size[0]*0.5;
+	lpos[1] -= this.size[1]*0.5;
+	vec2.normalize(lpos,lpos);
+	var angle = ((Math.atan2(lpos[0],-lpos[1]) / Math.PI) * 180) % 360;
+	if(this.continuous && angle < 0)
+		angle += 360;
+	var f = (angle - start_angle) / total_angle;
+	//console.log(angle,f);
+	if(this.continuous && f > 1)//hack
+		f-=1;
+	if(!this.continuous)
+		f = Math.clamp( f, 0, 1 );
+	this.value = this.min_value + f * range;
+	//console.log(this.value);
 }
 
 // SLIDER ***************************************

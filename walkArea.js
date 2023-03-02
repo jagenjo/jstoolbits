@@ -16,6 +16,8 @@ WalkArea.prototype.addShape = function(shape)
 
 WalkArea.prototype.addRect = function(start,width,depth)
 {
+	if(start.length < 3)
+		throw("start position must be a 3d position")
 	var size = [width,0,depth];
 	var p1 = [start[0],start[1],start[2]];
 	var p2 = [start[0],start[1],start[2] + size[2]];
@@ -77,6 +79,9 @@ WalkArea.prototype.isInsideArea = function(pos)
 
 WalkArea.prototype.adjustPosition = function(pos)
 {
+	if(pos.length < 3)
+		throw("pos must be 3D");
+
 	if(!this.areas.length)
 		return pos;
 
@@ -144,4 +149,9 @@ function nearestToLine2D( p, a, b ) {
 	if( y_index == 2 )
 		return [a[0] + atob[0] * t, 0, a[2] + atob[1] * t ];
     return [a[0] + atob[0] * t, a[1] + atob[1] * t ];
+}
+
+if(typeof(window) == "undefined")
+{
+	module.exports = WalkArea;
 }
