@@ -1,29 +1,40 @@
-//used to save data continuously
-function Stream( stream_or_size )
-{
-	if( stream_or_size )		
-	{
-		if( stream_or_size.constructor === Number ) //usually for writing
-			this.data = new Uint8Array( stream_or_size + Stream.margin );
-		else if ( stream_or_size.constructor === ArrayBuffer ) //reading
-			this.data = new Uint8Array( stream_or_size ); 
-		else if( stream_or_size.constructor === Uint8Array ) 
-			this.data = stream_or_size; //no clone
-		else
-		{
-			console.error("unkown stream info:", stream_or_size.constructor.name );
-			throw("unkown stream info:", stream_or_size );
-		}
-	}
-	else
-		this.data = new Uint8Array( 1024*1024 ); //default
-	
-	this.index = 0;
-	this.view = new DataView( this.data.buffer );
-	this.length = this.data.length;
-	this.little_endian = true;
+/* 
+Stream class to write or read sequential data in an ArrayBuffer, for sync data over the network
+It supports normalization in ranges
+Javi Agenjo 2025 
+*/
 
-	this.block_size_stack = []; //allows to go back to store the size of a block
+class Stream
+{
+	index = 0
+	length = 0
+	little_endian = true
+	block_size_stack = []; //allows to go back to store the size of a block
+	data = null //Uint8Array
+	view = null //dataview
+
+	constructor( stream_or_size )
+	{
+		if( stream_or_size )		
+		{
+			if( stream_or_size.constructor === Number ) //usually for writing
+				this.data = new Uint8Array( stream_or_size + Stream.margin );
+			else if ( stream_or_size.constructor === ArrayBuffer ) //reading
+				this.data = new Uint8Array( stream_or_size ); 
+			else if( stream_or_size.constructor === Uint8Array ) 
+				this.data = stream_or_size; //no clone
+			else
+			{
+				console.error("unkown stream info:", stream_or_size.constructor.name );
+				throw("unkown stream info:", stream_or_size );
+			}
+		}
+		else
+			this.data = new Uint8Array( 1024*1024 ); //default
+		
+		this.view = new DataView( this.data.buffer );
+		this.length = this.data.length;
+	}
 }
 
 var LiteStream = Stream;
@@ -31,6 +42,45 @@ var LiteStream = Stream;
 Stream.margin = 1024 * 2;
 Stream.DATA_EVENT = 0;
 Stream.DATAFLOATS_EVENT = 1;
+Stream.DATA_MAXRANGE = { u8: 0xFF, uint8: 0xFF, u16: 0xFFFF, uint16: 0xFFFF, u32: 0xFFFFFFFF, uint32: 0xFFFFFFFF }
+Stream.BYTE_OFFSETS = {
+	"i8":1,
+	"int8": 1,
+	"u8":1,
+	"uint8": 1,
+	"i16": 2,
+	"int16": 2,
+	"u16": 2,
+	"uint16": 2,
+	"i32": 4,
+	"int32": 4,
+	"u32": 4,
+	"uint32": 4,
+	"f32":4,
+	"float32": 4,
+	"f64":8,
+	"float64": 8
+};
+
+Stream.DATATYPE_CTOR = {
+	"i8": Int8Array,
+	"int8": Int8Array,
+	"u8": Uint8Array,
+	"uint8": Uint8Array,
+	"i16": Int16Array,
+	"int16": Int16Array,
+	"u16": Uint16Array,
+	"uint16": Uint16Array,
+	"i32": Int32Array,
+	"int32": Int32Array,
+	"u32": Uint32Array,
+	"uint32": Uint32Array,
+	"f32": Float32Array,
+	"float32": Float32Array,
+	"f64": Float64Array,
+	"float64": Float64Array
+}
+
 
 Stream.prototype.reset = function()
 {
@@ -103,31 +153,106 @@ Stream.prototype.resize = function( new_size )
 	this.length = new_size;
 }
 
+function convertValueToNormalized( value, min, max, type )
+{
+	let range = max - min
+	let maxRange = Stream.DATA_MAXRANGE[ type ]
+	if(maxRange)
+		value = (value - min) / (range / maxRange)
+	return value
+}
+
+function convertNormalizedToValue( value, min, max, type )
+{
+	let range = max - min
+	let maxRange = Stream.DATA_MAXRANGE[ type ]
+	if(maxRange)
+		value = value / (maxRange / range) + min
+	return value
+}
+
+
 //writing methods *****
+/* usage
+[
+	["varname","dataType", size?, [min,max]? ]
+]
+*/
 Stream.prototype.writeFromDataDescription = function(object,description)
 {
+	description = description || object["@struct"]
+	if(!description)
+		throw "no description supplied"
 	for(var i = 0; i < description.length; ++i)
 	{
 		var info = description[i];
 		var varname = info[0];
+		var dataType = info[1];
+		var count = info[2];
+		var dataRange = info[3];
+		if(!varname)
+		{
+			this.index += count;
+			continue;
+		}
+
 		var value = object[varname];
 		if(value==null)
 			throw("data missing from object when converting to stream");
-		if( info[2] )
-			this.writeArray(value);
-		else
-			switch(info[1])
+		if( count && count > 1 ) //for typed arrays
+		{
+			if(dataRange) //if ranged, normalize the value in the range
 			{
-				case "Int8": this.writeInt8(value); break;
-				case "Uint8": this.writeUint8(value); break;
-				case "Int16": this.writeInt16(value); break;
-				case "Uint16": this.writeUint16(value); break;
-				case "Int32": this.writeUint32(value); break;
-				case "Uint32": this.writeUint32(value); break;
-				case "Float32": this.writeFloat32(value); break;
-				case "Float64": this.writeFloat64(value); break;
-				case "Array": this.writeArray(value); break;
+				for(let j = 0; j < count; j++)
+				{
+					let nvalue = convertValueToNormalized( value[j], dataRange[0], dataRange[1], dataType )
+					switch(dataType)
+					{
+						case "u8":
+						case "uint8": this.writeUint8(nvalue); break;
+						case "u16":
+						case "uint16": this.writeUint16(nvalue); break;
+						case "u32":
+						case "uint32": this.writeUint32(nvalue); break;
+						default: throw "range types require integer types"
+					}
+				}
 			}
+			else if( dataType === "string")
+				this.writeFixedString( value, count )
+			else //type is preserved
+			{
+				if(value.constructor === Array)
+					value = new Stream.DATATYPE_CTOR[dataType](value);
+				this.writeArray(value);
+			}
+		}
+		else
+		{
+			if(dataRange) //range
+				value = convertValueToNormalized(value, dataRange[0], dataRange[1], dataType)
+	
+			switch(dataType)
+			{
+				case "i8":
+				case "int8": this.writeInt8(value); break;
+				case "u8":
+				case "uint8": this.writeUint8(value); break;
+				case "i16":
+				case "int16": this.writeInt16(value); break;
+				case "u16":
+				case "uint16": this.writeUint16(value); break;
+				case "i32":
+				case "int32": this.writeInt32(value); break;
+				case "u32":
+				case "uint32": this.writeUint32(value); break;
+				case "f32":
+				case "float32": this.writeFloat32(value); break;
+				case "f64":
+				case "float64": this.writeFloat64(value); break;
+				case "array": this.writeArray(value); break; //only for typed arrays
+			}
+		}
 	}
 }
 
@@ -143,7 +268,7 @@ Stream.prototype.writeParams = function( )
 
 Stream.prototype.writeArray = function( array, fixed_size_in_bytes )
 {
-	var bytes = array.BYTES_PER_ELEMENT;
+	var bytes = array.BYTES_PER_ELEMENT || 1;
 	if(fixed_size_in_bytes && fixed_size_in_bytes < (array.length * bytes) )
 		throw("fixed size is not enough to store array");
 
@@ -153,6 +278,10 @@ Stream.prototype.writeArray = function( array, fixed_size_in_bytes )
 
 	switch( array.constructor )
 	{
+		case String:
+			for(var i = 0; i < array.length; ++i)
+				this.view.setUint8( this.index + i, array.charCodeAt(i), this.little_endian );
+			break;
 		case Uint8Array:
 		case Int8Array:
 			this.data.set( array, this.index );
@@ -181,9 +310,9 @@ Stream.prototype.writeArray = function( array, fixed_size_in_bytes )
 				for(var i = 0; i < array.length; ++i)
 					this.view.setFloat64( this.index + i * 8, array[i], this.little_endian );
 				break;
-			case Array:
+		case Array:
 		default:
-			throw("Stream only supports Uint8Array, Int8Array and Float32Array");
+			throw("Stream only supports Typed Arrays");
 	}
 	this.index += l;
 }
@@ -296,17 +425,6 @@ Stream.prototype.setFloat64 = function( v )
 	this.view.setFloat64( this.index, v, this.little_endian);
 }
 
-Stream.byte_offsets = {
-	"Int8": 1,
-	"Uint8": 1,
-	"Int16": 2,
-	"Uint16": 2,
-	"Int32": 4,
-	"Uint32": 4,
-	"Float32": 4,
-	"Float64": 8
-};
-
 Stream.prototype.skipFromDataDescription = function(object,description)
 {
 	for(var i = 0; i < description.length; ++i)
@@ -314,42 +432,106 @@ Stream.prototype.skipFromDataDescription = function(object,description)
 		var info = description[i];
 		var varname = info[0];
 		var type = info[1];
-		var bytes = Stream.byte_offsets[type];
+		var bytes = Stream.BYTE_OFFSETS[type];
 		if( info[2] )
 			bytes *= info[2];
 		this.index += bytes;
 	}
 }
 
-Stream.prototype.readFromDataDescription = function(object,description)
+Stream.prototype.readFromDataDescription = function(target,description)
 {
+	description = description || target["@struct"]
+	if(!description)
+		throw "no description supplied"
+	if(!target)
+	target = {}
 	for(var i = 0; i < description.length; ++i)
 	{
 		var info = description[i];
 		var varname = info[0];
-		if( info[2] )
-			value = this.readArray(object[varname], info[2] ); 
+		var dataType = info[1];
+		var count = info[2];
+		var dataRange = info[3];
+
+		if(!varname)
+		{
+			this.index += count;
+			continue;
+		}		
+
+		if( count && count > 1 ) //has fixed size
+		{
+			let target_array = target[varname]
+			if(!target_array && dataType !== "string")
+				target[varname] = target_array = new Stream.DATATYPE_CTOR[dataType](count)
+			if(dataRange) //normalized
+			{
+				for(let j = 0; j < count; j++)
+				{
+					let nvalue = 0
+					switch(dataType)
+					{
+						case "i8":
+						case "int8": nvalue = this.readInt8(); break;
+						case "u8":
+						case "uint8": nvalue = this.readUint8(); break;
+						case "i16":
+						case "int16": nvalue = this.readInt16(); break;
+						case "u16":
+						case "uint16": nvalue = this.readUint16(); break;
+						case "i32":
+						case "int32": nvalue = this.readUint32(); break;
+						case "u32":
+						case "uint32": nvalue = this.readUint32(); break;
+						default:
+							throw("wrong data type for ranged typed array in stream");
+					}
+					target_array[j] = convertNormalizedToValue(nvalue, dataRange[0], dataRange[1], dataType)
+				}
+			}
+			else if( dataType === "string" )
+			{
+				target[varname] = this.readFixedString( count );
+			}
+			else
+			{
+				this.readArray( target_array, count ); 
+			}
+		}
 		else
 		{
-			switch(info[1])
+			let value = 0
+			switch(dataType)
 			{
-				case "Int8": value = this.readInt8(); break;
-				case "Uint8": value = this.readUint8(); break;
-				case "Int16": value = this.readInt16(); break;
-				case "Uint16": value = this.readUint16(); break;
-				case "Int32": value = this.readUint32(); break;
-				case "Uint32": value = this.readUint32(); break;
-				case "Float32": value = this.readFloat32(); break;
-				case "Float64": value = this.readFloat64(); break;
-				case "Array": this.readArray( object[varname] ); break;
-					continue;
-					break;
+				case "i8":
+				case "int8": value = this.readInt8(); break;
+				case "u8":
+				case "uint8": value = this.readUint8(); break;
+				case "i16":
+				case "int16": value = this.readInt16(); break;
+				case "u16":
+				case "uint16": value = this.readUint16(); break;
+				case "i32":
+				case "int32": value = this.readUint32(); break;
+				case "u32":
+				case "uint32": value = this.readUint32(); break;
+				case "f32":
+				case "float32": value = this.readFloat32(); break;
+				case "f64":
+				case "float64": value = this.readFloat64(); break;
+				case "array": this.readArray( target[varname] ); break;
 				default:
 					throw("wrong data type for stream");
 			}
-			object[varname] = value;
+			if(info[3]) //range
+				value = convertNormalizedToValue(value, dataRange[0], dataRange[1], dataType)
+
+			target[varname] = value;
 		}
 	}
+
+	return target
 }
 
 Stream.prototype.readBytes = function( bytes, clone )
@@ -497,7 +679,6 @@ Stream.prototype.writeEventAndID = function(  event_id, id )
 	this.index += 5;
 }
 
-
 Stream.prototype.writeObject = function( object )
 {
 	object.writeToStream( this );
@@ -533,7 +714,22 @@ Stream.prototype.readString = function(num_bytes_size, big_endian )
 	this.readArray(arr);
 	var str = Stream.typedArrayToString(arr);
 
+	return str;
+}
 
+//reads a basic 1 byte per char string
+Stream.prototype.readFixedString = function( num_chars )
+{
+	let str = ""
+	var final_index = this.index + num_chars;
+	for(let i = 0; i < num_chars; i++)
+	{
+		let c = this.readUint8();
+		if(c === 0)
+			break;
+		str += String.fromCharCode(c);
+	}
+	this.index = final_index;
 	return str;
 }
 
@@ -580,6 +776,14 @@ Stream.prototype.writeString = function( str, fixed_size )
 	if(arr.length)
 		this.writeArray( arr, fixed_size ? fixed_size - 2 : null ); //2 where the size was stored
 }
+
+//only for byte strings
+Stream.prototype.writeFixedString = function( str, num_chars )
+{
+	for(let i = 0; i < num_chars; i++)
+		this.writeUint8( str.charCodeAt(i) || 0 );
+}
+
 
 Stream.prototype.isEmpty = function()
 {
@@ -635,127 +839,34 @@ Stream.typedArrayToString = function(typed_array, same_size)
 	return r;
 }
 
-//** GAME STUFF */
-
-/*
-Stream.prototype.writeEventItemCreated = function( item )
+Stream.unitTest = function()
 {
-	this.view.setUint8( this.index, ITEM_CREATED );
-	this.view.setUint8( this.index + 1 , item.constructor.CLASS_ID );
-	this.view.setUint32( this.index + 2 , item.block_id, this.little_endian );
-	this.index += 6;
-	item.writeToStream( this );
-	if( this.length <= this.index )
-		this.resize( this.length * 2 ); //double
-}
-
-Stream.prototype.writeEventItemUpdated = function( item )
-{
-	this.view.setUint8( this.index, ITEM_UPDATED );
-	this.view.setUint32( this.index + 1 , item.block_id, this.little_endian );
-	this.view.setUint32( this.index + 5 , item.id, this.little_endian );
-	this.index += 9;
-	item.writeToStream( this );
-	if( this.length <= this.index )
-		this.resize( this.length * 2 ); //double
-}
-
-Stream.prototype.writeEventItemRemoved = function( item )
-{
-	this.view.setUint8( this.index, ITEM_REMOVED );
-	this.view.setUint32( this.index + 1 , item.block_id, this.little_endian );
-	this.view.setUint32( this.index + 5 , item.id, this.little_endian );
-	this.index += 9;
-	if( this.length <= this.index )
-		this.resize( this.length * 2 ); //double
-}
-
-Stream.prototype.writeEventCell = function( event_id, block_id, x, y, z, cellinfo )
-{
-	var view = this.view;
-	view.setUint8( this.index, event_id );
-	view.setUint32( this.index + 1, block_id, this.little_endian );
-	view.setUint8( this.index + 4 + 1, x );
-	view.setUint8( this.index + 5 + 1, y );
-	view.setUint8( this.index + 6 + 1, z );
-	for(var i = 0; i < World.cell_bytes; ++i)
-		view.setUint8( this.index + 7 + 1 + i, cellinfo[i] );
-	this.index += 8 + World.cell_bytes;
-	if( this.length <= this.index )
-		this.resize( this.length * 2 ); //double
-}
-
-//pass the event in case we send a BLOCK_CREATED or BLOCK_UPDATED
-Stream.prototype.writeEventBlock = function( event_id, block )
-{
-	var view = this.view;
-	view.setUint8( this.index, event_id );
-	var block_data = block.toBinary();
-	view.setUint32( this.index + 1, block_data.length, this.little_endian );
-
-	if( this.length <= this.index + block_data.length + 5 )
-		this.resize( this.length * 2 ); //double
-	this.data.set( block_data, this.index + 5);
-	this.index += block_data.length + 5;
-}
-
-//first event to store
-Stream.prototype.writeEventWorld = function( world )
-{
-	if( this.length <= this.index + 32 )
-		this.resize( this.length * 2 ); //double
-	var view = this.view;
-	var initial = this.index;
-	
-	view.setUint8( this.index, WORLD_EVENT );
-	view.setUint16( this.index+1, 1, this.little_endian ); //version
-
-	//1byte free
-	view.setUint8( this.index+2, 0 ); //extra byte
-	
-	view.setUint32( this.index+4, world.info.seed, this.little_endian );
-	view.setUint32( this.index+8, world.info.grid_size, this.little_endian );
-	view.setUint8( this.index+12, world.global.max_height );
-
-	//3bytes free
-	view.setUint8( this.index+13, 0 ); //extra byte
-	view.setUint8( this.index+14, 0 ); //extra byte
-	view.setUint8( this.index+15, 0 ); //extra byte
-
-	view.setUint32( this.index+16, world.total_cells_side, this.little_endian );
-	view.setFloat32( this.index+20, world.time, this.little_endian );
-	view.setFloat32( this.index+24, world.last_block_id, this.little_endian );
-
-	//4 bytes free
-	this.index = initial + 32;
-}
-
-Stream.prototype.readEventWorld = function( world )
-{
-	var view = this.view;
-	var initial = this.index;
-	
-	var wversion = this.readUint16();
-	console.log( "world version:", wversion );//1
-
-	if( wversion == 1 )
-	{
-		this.readUint8();//3
-		world.info.seed = this.readUint32();
-		console.log( "wseed:", world.info.seed );
-		world.info.grid_size = this.readUint32();
-		world.global.max_height = this.readUint8();
-		this.skip(3);
-		world.total_cells_side = this.readUint32();
-		world.time = this.readFloat32();
-		world.last_block_id = this.readFloat32();
+	var obj = {
+		myInt: 1,
+		myString: "javi",
+		myNumber: 0.5,
+		myNumberNorm: 0.5,
+		myVector: [1,2,3],
+		myTypedVector: new Float32Array([1,2,3,4,5]),
+		junk: -1,
 	}
-	else
-		throw("unknown world version:",wversion);
 
-	this.index = initial + 31; //one byte for event type
+	var struct = [
+		["myInt","u32"],
+		["myString","string",32],
+		["myNumber","f32"],
+		["myNumberNorm","u8",1,[0,1]],
+		["myVector","u8",3],
+		[null,null,1], //padding
+		["myTypedVector","f32",5],
+	]
+
+	var stream = new Stream();
+	stream.writeFromDataDescription( obj, struct );
+	stream.index = 0
+	var result = stream.readFromDataDescription( null, struct );
+	console.log(obj, result)
 }
-*/
 
 //****************** */
 

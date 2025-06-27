@@ -43,14 +43,14 @@ DragAndScale.prototype.onMouse = function(e, skip_prevent_default)
 	if(this.onmouse)
 		ignore = this.onmouse(e);
 
-	if(e.type == "mousedown")
+	if(e.type == "mousedown" || e.type === "pointerdown")
 	{
 		this.dragging = true;
 		canvas.removeEventListener("mousemove", this._binded_mouse_callback );
 		document.body.addEventListener("mousemove", this._binded_mouse_callback  );
 		document.body.addEventListener("mouseup", this._binded_mouse_callback );
 	}
-	else if(e.type == "mousemove")
+	else if(e.type == "mousemove" || e.type === "pointermove")
 	{
 		if(!ignore)
 		{
@@ -60,7 +60,7 @@ DragAndScale.prototype.onMouse = function(e, skip_prevent_default)
 				this.mouseDrag( deltax * this.visual_scaling, deltay * this.visual_scaling );
 		}
 	}
-	else if(e.type == "mouseup")
+	else if(e.type == "mouseup" || e.type === "pointerup")
 	{
 		this.dragging = false;
 		document.body.removeEventListener("mousemove", this._binded_mouse_callback );
