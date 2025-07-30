@@ -1,20 +1,25 @@
 //Scale and Offset
-function DragAndScale( element, skip_bind )
+class DragAndScale
 {
 	//offset stored in world space
-	this.offset = new Float32Array([0,0]);
-	this.scale = 1;
-	this.min_scale = 0.2;
-	this.max_scale = 8;
-	this.visual_scaling = 1; //used when rendering to low res textures
-	this.onredraw = null;
-	this.last_mouse = new Float32Array(2);
-
-	if(element)
+	offset = new Float32Array([0,0]);
+	_scale = 1;
+	get scale(){ return this._scale}
+	set scale(v){ this.changeScale(v) }
+	min_scale = 0.2;
+	max_scale = 8;
+	visual_scaling = 1; //used when rendering to low res textures
+	onredraw = null;
+	last_mouse = new Float32Array(2);
+	
+	constructor( element, skip_bind )
 	{
-		this.element = element;
-		if(!skip_bind)
-			this.bindEvents( element );
+		if(element)
+		{
+			this.element = element;
+			if(!skip_bind)
+				this.bindEvents( element );
+		}
 	}
 }
 
@@ -31,6 +36,9 @@ DragAndScale.prototype.bindEvents = function( element )
 
 DragAndScale.prototype.onMouse = function(e, skip_prevent_default)
 {
+	if(e.clientX === undefined) //not interested, happends with touchstart, touchend
+		return;
+
 	var canvas = this.element;
 	var rect = canvas.getBoundingClientRect();
 	var x = e.clientX - rect.left;
@@ -92,22 +100,22 @@ DragAndScale.prototype.onMouse = function(e, skip_prevent_default)
 
 DragAndScale.prototype.toCanvasContext = function( ctx )
 {
-	ctx.scale( this.scale, this.scale );
+	ctx.scale( this._scale, this._scale );
 	ctx.translate( this.offset[0], this.offset[1] );
 }
 
 DragAndScale.prototype.convertOffsetToCanvas = function(pos, scaling)
 {
 	scaling = scaling || 1;
-	//return [pos[0] / this.scale - this.offset[0], pos[1] / this.scale - this.offset[1]];
-	return [ ((pos[0] + this.offset[0]) * this.scale) * scaling, ((pos[1] + this.offset[1]) * this.scale) * scaling ];
+	//return [pos[0] / this._scale - this.offset[0], pos[1] / this._scale - this.offset[1]];
+	return [ ((pos[0] + this.offset[0]) * this._scale) * scaling, ((pos[1] + this.offset[1]) * this._scale) * scaling ];
 }
 
 DragAndScale.prototype.convertCanvasToOffset = function(pos, scaling)
 {
 	scaling = scaling || 1;
-	return [ (pos[0] / scaling) / this.scale - this.offset[0] , 
-		(pos[1] / scaling) / this.scale - this.offset[1]  ];
+	return [ (pos[0] / scaling) / this._scale - this.offset[0] , 
+		(pos[1] / scaling) / this._scale - this.offset[1]  ];
 }
 
 //NOT WORKING WELL!!!
@@ -126,8 +134,8 @@ DragAndScale.prototype.centerAt = function(pos)
 
 DragAndScale.prototype.mouseDrag = function(x,y)
 {
-	this.offset[0] += x / this.scale;
-	this.offset[1] += y / this.scale;
+	this.offset[0] += x / this._scale;
+	this.offset[1] += y / this._scale;
 
 	if(	this.onredraw )
 		this.onredraw( this );
@@ -140,7 +148,7 @@ DragAndScale.prototype.changeScale = function( value, zooming_center )
 	else if(value > this.max_scale)
 		value = this.max_scale;
 
-	if(value == this.scale)
+	if(value == this._scale)
 		return;
 
 	if(!this.element)
@@ -152,7 +160,7 @@ DragAndScale.prototype.changeScale = function( value, zooming_center )
 
 	zooming_center = zooming_center || [rect.width * 0.5 * this.visual_scaling,rect.height * 0.5 * this.visual_scaling];
 	var center = this.convertCanvasToOffset( zooming_center );
-	this.scale = value;
+	this._scale = value;
 
 	var new_center = this.convertCanvasToOffset( zooming_center );
 	var delta_offset = [new_center[0] - center[0], new_center[1] - center[1]];
@@ -166,5 +174,5 @@ DragAndScale.prototype.changeScale = function( value, zooming_center )
 
 DragAndScale.prototype.changeDeltaScale = function( value, zooming_center )
 {
-	this.changeScale( this.scale * value, zooming_center );
+	this.changeScale( this._scale * value, zooming_center );
 }
